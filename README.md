@@ -3,7 +3,7 @@ emojipoo &#128169;
 
 Pure Erlang, Log-Structured Merge-Tree
 
-&#128169; is a refactoring  and simplification of [HanoiDB]("https://github.com/krestenkrab/hanoidb").
+&#128169; is a refactoring  and simplification of [HanoiDB](https://github.com/krestenkrab/hanoidb).
 
 It uses the same concept of doubling level sizes, but here they are layers on the pile...
 
