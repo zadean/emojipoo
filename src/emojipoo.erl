@@ -13,10 +13,10 @@
          batch/2, 
          close/1, 
          get/2, 
-         delete/2, 
+         delete/2, delete_async/2, 
          put/3, put/4,
-         range/2,
-         prefix/2,
+         range/2, range/3,
+         prefix/2, prefix/3,
          %fold/3, 
          %fold_range/4, 
          destroy/1]).
@@ -102,6 +102,11 @@ get(Ref,Key) when is_binary(Key) ->
 delete(Ref,Key) when is_binary(Key) ->
     gen_server:call(Ref, {delete, Key}, infinity).
 
+-spec delete_async(server(), binary()) ->
+                    ok | {error, term()}.
+delete_async(Ref, Key) when is_binary(Key) ->
+    gen_server:cast(Ref, {delete, Key}).
+
 -spec put(server(), binary(), binary()) ->
                  ok | {error, term()}.
 put(Ref,Key,Value) when is_binary(Key), is_binary(Value) ->
@@ -122,22 +127,30 @@ batch(Ref, BatchSpec) ->
 
 %% find range with given prefix, including the prefix
 prefix(Server, <<>>) ->
-   range(Server, #key_range{});
+   range(Server, #key_range{}, true);
 prefix(Server, Prefix) ->
    Range = #key_range{from_key = Prefix,
                       to_key   = next_binary(Prefix)},
-   range(Server, Range).
+   range(Server, Range, true).
+
+prefix(Server, Prefix, FilterMap) ->
+   Range = #key_range{from_key = Prefix,
+                      to_key   = next_binary(Prefix)},
+   range(Server, Range, FilterMap).
 
 -spec range(server(), key_range()) -> iter().
 range(Server, #key_range{} = Range) ->
+   range(Server, #key_range{} = Range, true).
+
+range(Server, #key_range{} = Range, FilterMap) ->
    Ref = make_ref(),
    Target = #{ref => Ref, target => self()},
    C = fun() ->
              range_collector(Target)
        end,
    Collector = erlang:spawn_link(C),
-   AllPids = gen_server:call(Server, {range, Collector, Range}),
-   Collector ! {state, AllPids},
+   AllPids = gen_server:call(Server, {range, Collector, Range, FilterMap}),
+   Collector ! {start, AllPids},
    make_iterator(Ref).
 
 open_layers(Dir, Options) ->
@@ -231,16 +244,19 @@ handle_cast({bottom_level, N}, #state{log = Log, top = Top} = State)
                         log = emojipoo_log:set_max_depth(Log, N)},
    _ = emojipoo_layer:set_max_depth(Top, N),
    {noreply, State2};
+handle_cast({delete, Key}, State) when is_binary(Key) ->
+   {ok, State2} = do_put(Key, ?TOMBSTONE, infinity, State),
+   {noreply, State2};
 handle_cast(Info,State) ->
    ?error("Unknown cast ~p~n", [Info]),
    {stop, bad_msg, State}.
 
 
-handle_call({range, FoldWorkerPID, Range}, _From, 
+handle_call({range, FoldWorkerPID, Range, FilterMap}, _From, 
             #state{top = TopLevel, log = Log} = State) ->
    Ref = make_ref(),
-   ok = emojipoo_log:range(Log, FoldWorkerPID, Ref, Range),
-   Result = emojipoo_layer:range(TopLevel, FoldWorkerPID, Range, [Ref]),
+   ok = emojipoo_log:range(Log, FoldWorkerPID, Ref, Range, FilterMap),
+   Result = emojipoo_layer:range(TopLevel, FoldWorkerPID, Range, [Ref], FilterMap),
    {reply, Result, State};
 handle_call({put, Key, Value, Expiry}, _From, State) when is_binary(Key), 
                                                           is_binary(Value) ->
@@ -318,7 +334,7 @@ do_batch(BatchSpec, State=#state{log = Log, top = Top}) ->
 
 range_collector(Target) ->
    receive
-      {state, AllPids} ->
+      {start, AllPids} ->
          Tab = ets:new(?MODULE, [ordered_set]),
          RevPids = lists:reverse(AllPids),
          range_collector(Target, RevPids, RevPids, Tab)

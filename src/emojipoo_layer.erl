@@ -20,7 +20,7 @@
          close/1,
          destroy/1,
          set_max_depth/2,
-         range/4
+         range/5
         ]).
 
 -record(state, 
@@ -92,8 +92,8 @@ destroy(LayerPid) ->
 set_max_depth(LayerPid, Depth) ->
    gen_statem:cast(LayerPid, {set_max_depth, Depth}).
 
-range(LayerPid, SendTo, Range, List) ->
-   {ok, Folders} = gen_statem:call(LayerPid, {init_range_fold, SendTo, Range, List}),
+range(LayerPid, SendTo, Range, List, FilterMap) ->
+   {ok, Folders} = gen_statem:call(LayerPid, {init_range_fold, SendTo, Range, List, FilterMap}),
    Folders.
 
 spawn_merge(State) ->
@@ -494,7 +494,7 @@ handle_event({call, _}, destroy, _, #state{next = Next} = State) ->
    end,
    {stop_and_reply, normal, ok};
 
-handle_event({call, From}, {init_range_fold, SendTo, Range, List}, ready, 
+handle_event({call, From}, {init_range_fold, SendTo, Range, List, FilterMap}, ready, 
              #state{next = Next} = State) ->
    %?log("init_range_fold ~p -> ~p", [Range, SendTo]),
    
@@ -506,15 +506,15 @@ handle_event({call, From}, {init_range_fold, SendTo, Range, List}, ready,
          {_, undefined, undefined} ->
             ok = make_hard_link("A", "AF", Suffix, State),
             Af = link_filename("AF", Suffix, State),
-            {ok, PID0} = start_range_fold(Af, SendTo, Range, State),
+            {ok, PID0} = start_range_fold(Af, SendTo, Range, State, FilterMap),
             {[PID0|List], [PID0]};
          {_, _, undefined} ->
             ok = make_hard_link("A", "AF", Suffix, State),
             ok = make_hard_link("B", "BF", Suffix, State),
             Af = link_filename("AF", Suffix, State),
             Bf = link_filename("BF", Suffix, State),
-            {ok, PIDA} = start_range_fold(Af, SendTo, Range, State),
-            {ok, PIDB} = start_range_fold(Bf, SendTo, Range, State),
+            {ok, PIDA} = start_range_fold(Af, SendTo, Range, State, FilterMap),
+            {ok, PIDB} = start_range_fold(Bf, SendTo, Range, State, FilterMap),
             {[PIDA,PIDB|List], [PIDB,PIDA]};
          {_, _, _} ->
             ok = make_hard_link("A", "AF", Suffix, State),
@@ -523,9 +523,9 @@ handle_event({call, From}, {init_range_fold, SendTo, Range, List}, ready,
             Af = link_filename("AF", Suffix, State),
             Bf = link_filename("BF", Suffix, State),
             Cf = link_filename("CF", Suffix, State),
-            {ok, PIDA} = start_range_fold(Af, SendTo, Range, State),
-            {ok, PIDB} = start_range_fold(Bf, SendTo, Range, State),
-            {ok, PIDC} = start_range_fold(Cf, SendTo, Range, State),
+            {ok, PIDA} = start_range_fold(Af, SendTo, Range, State, FilterMap),
+            {ok, PIDB} = start_range_fold(Bf, SendTo, Range, State, FilterMap),
+            {ok, PIDC} = start_range_fold(Cf, SendTo, Range, State, FilterMap),
             {[PIDA,PIDB,PIDC|List], [PIDC,PIDB,PIDA]}
       end,
    case Next of
@@ -534,7 +534,7 @@ handle_event({call, From}, {init_range_fold, SendTo, Range, List}, ready,
       _ ->
          % send the full list of pids to the next layer down
          % `sh*t rolls down hill`
-         Reply = gen_statem:call(Next, {init_range_fold, SendTo, Range, NextList}),
+         Reply = gen_statem:call(Next, {init_range_fold, SendTo, Range, NextList, FilterMap}),
          {keep_state, 
           State#state{folding = FoldingPIDs},
           {reply, From, Reply}}
@@ -588,7 +588,7 @@ link_filename(Prefix, Suffix, #state{dir = Dir,
    filename:join(Dir, Prefix ++ "-" ++ integer_to_list(Depth) ++ 
                       "-" ++ Suffix ++ ".data").
 
-start_range_fold(FileName, SendTo, Range, State) ->
+start_range_fold(FileName, SendTo, Range, State, FilterMap) ->
    Self = self(),
    Fun = 
       fun() ->
@@ -596,7 +596,7 @@ start_range_fold(FileName, SendTo, Range, State) ->
                %?log("start_range_fold ~p on ~p -> ~p", [self(), FileName, SendTo]),
                erlang:link(SendTo),
                {ok, File} = emojipoo_reader:open(FileName, [folding|State#state.opts]),
-               do_range_iter(File, SendTo, self(), Range),
+               do_range_iter(File, SendTo, self(), Range, FilterMap),
                emojipoo_reader:close(File),
                erlang:unlink(SendTo),
                ok
@@ -616,11 +616,12 @@ start_range_fold(FileName, SendTo, Range, State) ->
 -spec do_range_iter(BT        :: emojipoo_reader:read_file(),
                     SendTo    :: pid(),
                     SelfOrRef :: pid() | reference(),
-                    Range     :: tuple() ) -> ok.
-do_range_iter(BT, SendTo, SelfOrRef, Range) ->
+                    Range     :: tuple(),
+                    FilterMap :: fun() | true ) -> ok.
+do_range_iter(BT, SendTo, SelfOrRef, Range, FilterMap) ->
    try 
       Fun = fun(Key, Value, {0, KVs}) ->
-                  send(SendTo, SelfOrRef, [{Key, Value}|KVs]),
+                  send(SendTo, SelfOrRef, [{Key, Value}|KVs], FilterMap),
                   {?BTREE_ASYNC_CHUNK_SIZE - 1, []};
                (Key, Value, {N, KVs}) ->
                   {N - 1,[{Key, Value}|KVs]}
@@ -629,16 +630,21 @@ do_range_iter(BT, SendTo, SelfOrRef, Range) ->
                                  BT, Range) 
    of
       {limit, {_, KVs}, LastKey} ->
-         send(SendTo, SelfOrRef, KVs),
+         send(SendTo, SelfOrRef, KVs, FilterMap),
          SendTo ! {level_limit, SelfOrRef, LastKey};
       {done, {_, KVs}} ->
          %% tell fold merge worker we're done
-         send(SendTo, SelfOrRef, KVs),
+         send(SendTo, SelfOrRef, KVs, FilterMap),
          SendTo ! {level_done, SelfOrRef}
    catch
       exit:worker_died -> ok
    end,
    ok.
+
+send(SendTo, Ref, ReverseKVs, true) ->
+   send(SendTo, Ref, ReverseKVs);
+send(SendTo, Ref, ReverseKVs, FilterMap) ->
+   send(SendTo, Ref, lists:filtermap(FilterMap, ReverseKVs)).
 
 send(_,_,[]) ->
     [];

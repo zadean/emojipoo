@@ -8,7 +8,7 @@
 -export([new/4,
          add/4, add/5,
          batch/3,
-         range/4,
+         range/4, range/5,
          lookup/2, 
          recover/5, 
          finish/2
@@ -249,7 +249,11 @@ add(Key, Value, Expiry, Log, Top) ->
 
 -spec range(#log{}, pid(), pid() | reference(), #key_range{}) -> ok.
 range(#log{cache = Cache}, SendTo, Ref, Range) ->
-   do_range_iter(Cache, SendTo, Ref, Range).
+   do_range_iter(Cache, SendTo, Ref, Range, true).
+
+-spec range(#log{}, pid(), pid() | reference(), #key_range{}, fun()) -> ok.
+range(#log{cache = Cache}, SendTo, Ref, Range, FilterMap) ->
+   do_range_iter(Cache, SendTo, Ref, Range, FilterMap).
 
 -spec flush(#log{}, pid()) -> {ok, #log{}}.
 flush(#log{dir = Dir, 
@@ -326,10 +330,13 @@ gb_tree_fold(Fun, Acc, Tree) when is_function(Fun, 3) ->
    ets:foldl(IFun, Acc, Tree).
 
 
-tree_fold(SendTo, SelfOrRef, {KVs, Continuation}) ->
+tree_fold(SendTo, SelfOrRef, {KVs, Continuation}, true) ->
    send(SendTo, SelfOrRef, KVs),
-   tree_fold(SendTo, SelfOrRef, ets:select(Continuation));
-tree_fold(SendTo, SelfOrRef, '$end_of_table') ->
+   tree_fold(SendTo, SelfOrRef, ets:select(Continuation), true);
+tree_fold(SendTo, SelfOrRef, {KVs, Continuation}, Filtermap) ->
+   send(SendTo, SelfOrRef, lists:filtermap(Filtermap, KVs)),
+   tree_fold(SendTo, SelfOrRef, ets:select(Continuation), Filtermap);
+tree_fold(SendTo, SelfOrRef, '$end_of_table', _) ->
    SendTo ! {level_done, SelfOrRef}.
 
 
@@ -337,11 +344,13 @@ tree_fold(SendTo, SelfOrRef, '$end_of_table') ->
 -spec do_range_iter(Tree      :: ets:tid(),
                     SendTo    :: pid(),
                     SelfOrRef :: pid() | reference(),
-                    Range     :: tuple() ) -> ok.
+                    Range     :: tuple(),
+                    Filtermap :: fun() ) -> ok.
 do_range_iter(Tree, SendTo, SelfOrRef, #key_range{from_key = FromKey,
                                                   from_inclusive = IncFrom,
                                                   to_key = ToKey,
-                                                  to_inclusive = IncTo}) ->
+                                                  to_inclusive = IncTo},
+              Filtermap) ->
    try
       Guard = case {IncFrom, IncTo} of
                  {true, true} when ToKey =/= undefined ->
@@ -359,7 +368,7 @@ do_range_iter(Tree, SendTo, SelfOrRef, #key_range{from_key = FromKey,
               end,
       MatchSpec = [{{'$1','$2'}, Guard, [{{'$1','$2'}}]}],
       InitIter = ets:select(Tree, MatchSpec, ?BTREE_ASYNC_CHUNK_SIZE),
-      tree_fold(SendTo, SelfOrRef, InitIter)
+      tree_fold(SendTo, SelfOrRef, InitIter, Filtermap)
    catch
       exit:worker_died -> ok
    end,
