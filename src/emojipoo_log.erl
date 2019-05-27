@@ -30,7 +30,7 @@ new(Directory, MinLevel, MaxLevel, Opts) ->
                           [raw, exclusive, write, delayed_write, append]),
    {ok, #log{log_file = File, 
              dir = Directory, 
-             cache = gb_trees:empty(),
+             cache = empty(),
              min_depth = MinLevel, 
              max_depth = MaxLevel,
              config = Opts}}.
@@ -59,10 +59,10 @@ do_recover(Directory, TopLevel, MinLevel, MaxLevel, Config) ->
 
 fill_cache({Key, Value}, Cache) when is_binary(Value); 
                                      Value =:= ?TOMBSTONE ->
-   gb_trees:enter(Key, Value, Cache);
+   enter(Key, Value, Cache);
 fill_cache({Key, {Value, _TStamp} = Entry}, Cache) when is_binary(Value); 
                                                         Value =:= ?TOMBSTONE ->
-   gb_trees:enter(Key, Entry, Cache);
+   enter(Key, Entry, Cache);
 fill_cache([], Cache) ->
    Cache;
 fill_cache(Transactions, Cache) when is_list(Transactions) ->
@@ -73,7 +73,7 @@ read_from_log(Directory, MinLevel, MaxLevel, Config) ->
    Cache = cache_from_binary(LogBinary, Directory),
    Log = #log{dir = Directory, 
               cache = Cache, 
-              count = gb_trees:size(Cache), 
+              count = tree_size(Cache), 
               min_depth = MinLevel, 
               max_depth = MaxLevel, 
               config = Config},
@@ -82,11 +82,11 @@ read_from_log(Directory, MinLevel, MaxLevel, Config) ->
 cache_from_binary(LogBinary, Directory) ->
    case emojipoo_util:decode_crc_data(LogBinary, [], []) of
       {ok, KVs} ->
-         fill_cache(KVs, gb_trees:empty());
+         fill_cache(KVs, empty());
       {partial, KVs, _ErrorData} ->
          ?error("ignoring undecypherable bytes in ~p~n", 
                 [?LOGFILENAME(Directory)]),
-         fill_cache(KVs, gb_trees:empty())
+         fill_cache(KVs, empty())
    end.
    
 %% @doc Add a Key/Value to the log
@@ -104,11 +104,11 @@ do_add(#log{log_file = File,
            %% Both the database expiry and this key's expiry are unset or set to 0
            %% (aka infinity) so never automatically expire the value.
            {emojipoo_util:crc_encapsulate_kv_entry(Key, Value),
-            gb_trees:enter(Key, Value, Cache)};
+            enter(Key, Value, Cache)};
         true ->
            Expiry = get_expiration(DatabaseExpiryTime, KeyExpiryTime),
            {emojipoo_util:crc_encapsulate_kv_entry(Key, {Value, Expiry}),
-            gb_trees:enter(Key, {Value, Expiry}, Cache)}
+            enter(Key, {Value, Expiry}, Cache)}
      end,
    
    ok = file:write(File, Data),
@@ -156,8 +156,9 @@ do_sync(File, Log) ->
 
 
 lookup(Key, #log{cache = Cache}) ->
-   case gb_trees:lookup(Key, Cache) of
-      {value, {Value, TStamp}} ->
+   case tree_lookup(Key, Cache) of
+      none -> none;
+      {Value, TStamp} ->
          case emojipoo_util:has_expired(TStamp) of
             true -> {value, ?TOMBSTONE};
             false -> {value, Value}
@@ -186,7 +187,7 @@ finish(#log{dir = Dir,
    
    case Count of
       N when N > 0 ->
-         %?log("Count ~p~n", [Count]),
+         ?log("Count ~p~n", [Count]),
          %% next, flush cache to a new BTree
          BTreeFileName = filename:join(Dir, "templog.data"),
          {ok, BT} = emojipoo_writer:open(BTreeFileName,
@@ -219,6 +220,7 @@ finish(#log{dir = Dir,
    ok.
 
 destroy(#log{dir = Dir, 
+             cache = Cache,
              log_file = LogFile}) ->
    %% first, close the log file
    if LogFile /= undefined ->
@@ -229,6 +231,7 @@ destroy(#log{dir = Dir,
    %% then delete it
    LogFileName = ?LOGFILENAME(Dir),
    file:delete(LogFileName),
+   tree_delete(Cache),
    ok.
 
 -spec add(key(), value(), #log{}, pid()) -> {ok, #log{}}.
@@ -250,11 +253,13 @@ range(#log{cache = Cache}, SendTo, Ref, Range) ->
 
 -spec flush(#log{}, pid()) -> {ok, #log{}}.
 flush(#log{dir = Dir, 
+           cache = Cache,
            min_depth = MinLevel, 
            max_depth = MaxLevel, 
            config = Config} = Log, Top) ->
    ok = finish(Log, Top),
    {error, enoent} = file:read_file_info(?LOGFILENAME(Dir)),
+   tree_delete(Cache),
    new(Dir, MinLevel,  MaxLevel, Config).
 
 has_room(#log{count = Count, 
@@ -289,43 +294,47 @@ batch1(Spec, #log{log_file = File,
    BatchFun = fun({put, Key, Value}, Cache) ->
                     case Expiry of
                        infinity ->
-                          gb_trees:enter(Key, Value, Cache);
+                          enter(Key, Value, Cache);
                        _ ->
-                          gb_trees:enter(Key, {Value, Expiry}, Cache)
+                          enter(Key, {Value, Expiry}, Cache)
                     end;
                  ({delete, Key}, Cache) ->
                     case Expiry of
                        infinity ->
-                          gb_trees:enter(Key, ?TOMBSTONE, Cache);
+                          enter(Key, ?TOMBSTONE, Cache);
                        _ ->
-                          gb_trees:enter(Key, {?TOMBSTONE, Expiry}, Cache)
+                          enter(Key, {?TOMBSTONE, Expiry}, Cache)
                     end
               end,   
    Cache2 = lists:foldl(BatchFun, Cache0, Spec),
 
-   Count = gb_trees:size(Cache2),
+   Count = tree_size(Cache2),
    %?log("Count ~p~n", [Count]),
    Log3 = Log2#log{cache = Cache2,
                    total_size = TotalSize + erlang:iolist_size(Data),
                    count = Count},
-   flush(Log3, Top).
+   {ok, ensure_space(Log3, 1, Top)}.
 
 set_max_depth(Log = #log{}, MaxLevel) ->
    Log#log{max_depth = MaxLevel}.
 
 
 gb_tree_fold(Fun, Acc, Tree) when is_function(Fun, 3) ->
-   Iter = gb_trees:iterator(Tree),
-   gb_tree_fold_1(Fun, Acc, gb_trees:next(Iter)).
-
-gb_tree_fold_1(Fun, Acc0, {Key, Value, Iter}) ->
-   Acc = Fun(Key, Value, Acc0),
-   gb_tree_fold_1(Fun, Acc, gb_trees:next(Iter));
-gb_tree_fold_1(_, Acc, none) ->
-   Acc.
+   IFun = fun({Key, Value}, Acc0) ->
+                Fun(Key, Value, Acc0)
+          end,
+   ets:foldl(IFun, Acc, Tree).
 
 
--spec do_range_iter(Tree      :: gb_trees:tree(),
+tree_fold(SendTo, SelfOrRef, {KVs, Continuation}) ->
+   send(SendTo, SelfOrRef, KVs),
+   tree_fold(SendTo, SelfOrRef, ets:select(Continuation));
+tree_fold(SendTo, SelfOrRef, '$end_of_table') ->
+   SendTo ! {level_done, SelfOrRef}.
+
+
+
+-spec do_range_iter(Tree      :: ets:tid(),
                     SendTo    :: pid(),
                     SelfOrRef :: pid() | reference(),
                     Range     :: tuple() ) -> ok.
@@ -333,32 +342,24 @@ do_range_iter(Tree, SendTo, SelfOrRef, #key_range{from_key = FromKey,
                                                   from_inclusive = IncFrom,
                                                   to_key = ToKey,
                                                   to_inclusive = IncTo}) ->
-   try 
-      InitIter = gb_trees:iterator_from(FromKey, Tree),
-      
-      Fun = fun(Key, _, Acc) when Key >= ToKey,
-                                  ToKey =/= undefined,
-                                  not IncTo ->
-                  Acc;
-               (Key, _, Acc) when Key > ToKey,
-                                  ToKey =/= undefined,
-                                  IncTo ->
-                  Acc;
-               (Key, _, Acc) when Key == FromKey,
-                                  not IncFrom ->
-                  Acc;
-               %% is in range
-               (Key, Value, {0, KVs}) ->
-                  send(SendTo, SelfOrRef, [{Key, Value}|KVs]),
-                  {?BTREE_ASYNC_CHUNK_SIZE - 1, []};
-               (Key, Value, {N, KVs}) ->
-                  {N - 1,[{Key, Value}|KVs]}
-            end,
-      gb_tree_fold_1(Fun, {?BTREE_ASYNC_CHUNK_SIZE - 1, []}, gb_trees:next(InitIter)) 
-   of
-      {_, KVs} ->
-         send(SendTo, SelfOrRef, KVs),
-         SendTo ! {level_done, SelfOrRef}
+   try
+      Guard = case {IncFrom, IncTo} of
+                 {true, true} when ToKey =/= undefined ->
+                    [{'>=','$1',FromKey},{'=<','$1',ToKey}];
+                 {true, false} when ToKey =/= undefined ->
+                    [{'>=','$1',FromKey},{'<','$1',ToKey}];
+                 {true, _} when ToKey =:= undefined ->
+                    [{'>=','$1',FromKey}];
+                 {false, true} when ToKey =/= undefined ->
+                    [{'>','$1',FromKey},{'=<','$1',ToKey}];
+                 {false, false} when ToKey =/= undefined ->
+                    [{'>','$1',FromKey},{'<','$1',ToKey}];
+                 {false, _} when ToKey =:= undefined ->
+                    [{'>','$1',FromKey}]
+              end,
+      MatchSpec = [{{'$1','$2'}, Guard, [{{'$1','$2'}}]}],
+      InitIter = ets:select(Tree, MatchSpec, ?BTREE_ASYNC_CHUNK_SIZE),
+      tree_fold(SendTo, SelfOrRef, InitIter)
    catch
       exit:worker_died -> ok
    end,
@@ -366,6 +367,28 @@ do_range_iter(Tree, SendTo, SelfOrRef, #key_range{from_key = FromKey,
 
 send(_,_,[]) ->
     [];
-send(SendTo,Ref,ReverseKVs) ->
-   SendTo ! {level_results, Ref, lists:reverse(ReverseKVs)}.
+send(SendTo,Ref,KVs) ->
+   SendTo ! {level_results, Ref, KVs}.
 
+
+tree_delete(Cache) ->
+   ets:delete(Cache).
+
+empty() ->
+   ets:new(?MODULE, [ordered_set, public]).
+
+enter(Key, Value, Cache) ->
+   ets:insert(Cache, {Key, Value}),
+   Cache.
+
+tree_size(Cache) ->
+   ets:info(Cache, size).
+
+% {value, Value} | 'none'
+tree_lookup(Key, Cache) ->
+   case ets:lookup(Cache, Key) of
+      [{Key, Val}] ->
+         Val;
+      [] ->
+         none
+   end.
