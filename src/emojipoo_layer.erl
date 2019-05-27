@@ -605,7 +605,7 @@ start_range_fold(FileName, SendTo, Range, State) ->
                   io:format(user, "BAD: ~p:~p ~p~n", [Class,Ex,Stack])
             after
                % delete the hard link to the file
-               ?log("*** deleting: ~p~n", [FileName]),
+               %?log("*** deleting: ~p~n", [FileName]),
                ok = file:delete(FileName),
                gen_statem:cast(Self, {range_fold_done, self()})
             end

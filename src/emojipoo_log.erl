@@ -160,8 +160,8 @@ lookup(Key, #log{cache = Cache}) ->
       none -> none;
       {Value, TStamp} ->
          case emojipoo_util:has_expired(TStamp) of
-            true -> {value, ?TOMBSTONE};
-            false -> {value, Value}
+            true -> ?TOMBSTONE;
+            false -> Value
          end;
       Reply -> Reply
    end.
@@ -384,7 +384,7 @@ enter(Key, Value, Cache) ->
 tree_size(Cache) ->
    ets:info(Cache, size).
 
-% {value, Value} | 'none'
+% Value | 'none'
 tree_lookup(Key, Cache) ->
    case ets:lookup(Cache, Key) of
       [{Key, Val}] ->

@@ -255,9 +255,9 @@ handle_call({delete, Key}, _From, State) when is_binary(Key) ->
 handle_call({get, Key}, From, #state{top = Top, 
                                      log = Log} = State) when is_binary(Key) ->
    case emojipoo_log:lookup(Key, Log) of
-      {value, ?TOMBSTONE} ->
+      ?TOMBSTONE ->
          {reply, not_found, State};
-      {value, Value} when is_binary(Value) ->
+      Value when is_binary(Value) ->
          {reply, {ok, Value}, State};
       none ->
          Cb = fun(Reply) -> gen_server:reply(From, Reply) end,
@@ -319,40 +319,42 @@ do_batch(BatchSpec, State=#state{log = Log, top = Top}) ->
 range_collector(Target) ->
    receive
       {state, AllPids} ->
-         range_collector(Target, AllPids, AllPids, [[]])
+         Tab = ets:new(?MODULE, [ordered_set]),
+         RevPids = lists:reverse(AllPids),
+         range_collector(Target, RevPids, RevPids, Tab)
+   after
+       10000 ->
+       error(timeout)
    end.
 
 
 range_collector(#{ref := Ref, 
-                  target := SendTo}, _, [], Acc) ->
-   RevAcc = lists:reverse(Acc),
-   Merged = emojipoo_util:umerge(RevAcc),
-   ok = split_send(Merged, SendTo, Ref, [], 0);
-%% range_collector(Target, [], AllPids, Acc) ->
-%%    % next iteration
-%%    range_collector(Target, AllPids, AllPids, Acc);
+                  target := SendTo}, _, [], Tab) ->
+   ok = split_send(Tab, SendTo, Ref);
 
-%% idea here is that the first pid is the most recent and smallest
-%% so empty it first, then move down the list this will make the 
-%% merge correct
-range_collector(Target, [Pid|TPids] = Pids, AllPids, Acc) ->
+%% idea here is that the first pid is the oldest and largest
+%% so empty it first, placing everything in an ets table 
+%% the newer data overwrites the older 
+range_collector(Target, [Pid|TPids] = Pids, AllPids, Tab) ->
    receive
       {level_result, Pid, KV} ->
-         range_collector(Target, Pids, AllPids, [[KV]|Acc]);
+         ets:insert(Tab, KV),
+         range_collector(Target, Pids, AllPids, Tab);
       {level_results, Pid, KVs} ->
-         range_collector(Target, Pids, AllPids, [KVs|Acc]);
+         ets:insert(Tab, KVs),
+         range_collector(Target, Pids, AllPids, Tab);
       {level_limit, Pid, _LastKey} ->
          ok = drain_from_pid(Pid),
          NewAll = lists:delete(Pid, AllPids),
-         range_collector(Target, TPids, NewAll, Acc);
+         range_collector(Target, TPids, NewAll, Tab);
       {level_done, Pid} when is_pid(Pid) ->
          ok = drain_from_pid(Pid),
          NewAll = lists:delete(Pid, AllPids),
-         range_collector(Target, TPids, NewAll, Acc);
-      {level_done, Ref} when is_reference(Ref) ->
-         ok = drain_from_pid(Ref),
-         NewAll = lists:delete(Ref, AllPids),
-         range_collector(Target, TPids, NewAll, Acc)      
+         range_collector(Target, TPids, NewAll, Tab);
+      {level_done, Pid} when is_reference(Pid) ->
+         ok = drain_from_pid(Pid),
+         NewAll = lists:delete(Pid, AllPids),
+         range_collector(Target, TPids, NewAll, Tab)      
    after
        60000 ->
        error(timeout)
@@ -362,32 +364,33 @@ make_iterator(Ref) ->
    receive
       {Ref, eof} ->
          [];
-      {Ref, RevResults} ->
-         lists:reverse(RevResults, fun() -> make_iterator(Ref) end)
+      {Ref, Results} ->
+         Results ++ fun() -> make_iterator(Ref) end
    end.
 
 drain_from_pid(Pid) ->
    receive
-      {level_results, Pid, _} ->
-         drain_from_pid(Pid);
-      {level_limit, Pid, _} ->
-         ok;
-      {level_done, Pid} ->
-         ok
+      {level_results, Pid, _} -> drain_from_pid(Pid);
+      {level_limit, Pid, _} -> ok;
+      {level_done, Pid} -> ok
    after 0 ->
        ok
    end.
 
 
-split_send(Merged, SendTo, Ref, RevAcc, ?BTREE_ASYNC_CHUNK_SIZE) ->
-   SendTo ! {Ref, RevAcc},
-   split_send(Merged, SendTo, Ref, [], 0);
-split_send([], SendTo, Ref, RevAcc, _) ->
-   SendTo ! {Ref, RevAcc},
+split_send(Tab, SendTo, Ref) ->
+   Iter = ets:select(Tab, [{'$1',[],['$1']}], ?BTREE_ASYNC_CHUNK_SIZE),
+   split_send_(Iter, SendTo, Ref),
+   ets:delete(Tab),
+   ok.
+
+split_send_({KVs, Continuation}, SendTo, Ref) ->
+   SendTo ! {Ref, KVs},
+   split_send_(ets:select(Continuation), SendTo, Ref);
+split_send_('$end_of_table', SendTo, Ref) ->
    SendTo ! {Ref, eof},
-   ok;
-split_send([H|Merged], SendTo, Ref, RevAcc, Count) ->
-   split_send(Merged, SendTo, Ref, [H|RevAcc], Count + 1).
+   ok.
+
 
 
 %% for a prefix, return the value that all prefixed binaries are less than. 

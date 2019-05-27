@@ -303,12 +303,12 @@ get_value(Value) -> Value.
 
 
 umerge(ListOfLists) ->
-   [KV || {_,V} = KV <- umerge(ListOfLists, []), V =/= ?TOMBSTONE].
-
-umerge([[] | T], Acc) ->
-   umerge(T, Acc);
-umerge([L | T], Acc) ->
-   umerge(T, lists:ukeymerge(1, Acc, L));
-umerge([], Acc) ->
-   Acc.
+   Tab = ets:new(?MODULE, [ordered_set]),
+   Fun = fun(L) ->
+               ets:insert(Tab, L)
+         end,
+   ok = lists:foreach(Fun, lists:reverse(ListOfLists)),
+   Ret = [KV || {_,V} = KV <- ets:tab2list(Tab), V =/= ?TOMBSTONE],
+   ets:delete(Tab),
+   Ret.
 
