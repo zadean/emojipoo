@@ -262,6 +262,9 @@ handle_event({call, From}, {lookup, Key}, ready, #state{next = Next} = State) ->
       {found, Result} ->
          {keep_state_and_data, {reply, From, {ok, Result}}}
    end;
+% wait for merge to finish on lookup
+handle_event(cast, {lookup, _, _}, merging, _) ->
+   {keep_state_and_data, [postpone]};
 handle_event(cast, {lookup, Key, ActionFun}, ready, #state{next = Next} = State) ->
    % newer -> older lookup, take first, this passes down chain
    case do_lookup(Key, [State#state.c, State#state.b, State#state.a]) of
