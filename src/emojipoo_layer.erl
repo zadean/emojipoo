@@ -497,6 +497,8 @@ handle_event({call, _}, destroy, _, #state{next = Next} = State) ->
    end,
    {stop_and_reply, normal, ok};
 
+handle_event({call, _}, {init_range_fold, _, _, _, _}, merging, _) ->
+   {keep_state_and_data, [postpone]};
 handle_event({call, From}, {init_range_fold, SendTo, Range, List, FilterMap}, ready, 
              #state{next = Next} = State) ->
    %?log("init_range_fold ~p -> ~p", [Range, SendTo]),
