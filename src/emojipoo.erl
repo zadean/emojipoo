@@ -149,7 +149,7 @@ range(Server, #key_range{} = Range, FilterMap) ->
              range_collector(Target)
        end,
    Collector = erlang:spawn_link(C),
-   AllPids = gen_server:call(Server, {range, Collector, Range, FilterMap}),
+   AllPids = gen_server:call(Server, {range, Collector, Range, FilterMap}, 60000),
    Collector ! {start, AllPids},
    make_iterator(Ref).
 
@@ -339,7 +339,7 @@ range_collector(Target) ->
          RevPids = lists:reverse(AllPids),
          range_collector(Target, RevPids, RevPids, Tab)
    after
-       10000 ->
+       100000 ->
        error(timeout)
    end.
 

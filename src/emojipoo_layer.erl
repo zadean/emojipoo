@@ -93,7 +93,7 @@ set_max_depth(LayerPid, Depth) ->
    gen_statem:cast(LayerPid, {set_max_depth, Depth}).
 
 range(LayerPid, SendTo, Range, List, FilterMap) ->
-   {ok, Folders} = gen_statem:call(LayerPid, {init_range_fold, SendTo, Range, List, FilterMap}),
+   {ok, Folders} = gen_statem:call(LayerPid, {init_range_fold, SendTo, Range, List, FilterMap}, 60000),
    Folders.
 
 spawn_merge(State) ->
