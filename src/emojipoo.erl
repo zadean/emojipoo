@@ -179,9 +179,9 @@ open_layers(Dir, Options) ->
           end,
    {MinDepth, MaxDepth} = lists:foldl(Fold, {TopDepth0, TopDepth0}, Files),
    
-   %% remove old log data file
-   LogFileName = ?LOGFILENAME(Dir),
-   _ = file:delete(LogFileName),
+%%    %% remove old log data file
+%%    LogFileName = ?LOGFILENAME(Dir),
+%%    _ = file:delete(LogFileName),
    % delete temp file if it is there
    TempFileName = filename:join(Dir, "templog.data"),
    _ = file:delete(TempFileName),
