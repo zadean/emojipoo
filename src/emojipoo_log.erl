@@ -345,7 +345,7 @@ tree_fold(SendTo, SelfOrRef, '$end_of_table', _) ->
                     SendTo    :: pid(),
                     SelfOrRef :: pid() | reference(),
                     Range     :: tuple(),
-                    Filtermap :: fun() ) -> ok.
+                    Filtermap :: fun() | boolean() ) -> ok.
 do_range_iter(Tree, SendTo, SelfOrRef, #key_range{from_key = FromKey,
                                                   from_inclusive = IncFrom,
                                                   to_key = ToKey,

@@ -284,15 +284,16 @@ handle_call(close, _From, #state{log = undefined} = State) ->
    {stop, normal, State};
 handle_call(close, _From, #state{log = Log, 
                                  top = Top, 
-                                 dir = Dir, 
-                                 max_depth = MaxDepth, 
-                                 opt = Config} = State) ->
+                                 dir = _Dir, 
+                                 max_depth = _MaxDepth, 
+                                 opt = _Config} = State) ->
    try
       ok = emojipoo_log:finish(Log, Top),
-      MinLevel = emojipoo_layer:depth(Top),
-      {ok, Log2} = emojipoo_log:new(Dir, MinLevel, MaxDepth, Config),
+      %MinLevel = emojipoo_layer:depth(Top),
+      %{ok, Log2} = emojipoo_log:new(Dir, MinLevel, MaxDepth, Config),
       ok = emojipoo_layer:close(Top),
-      {stop, normal, State#state{log = Log2}}
+      {stop, normal, State}
+      %{stop, normal, State#state{log = Log2}}
    catch
       E:R ->
          ?error("exception from close ~p:~p~n", [E,R]),

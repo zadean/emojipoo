@@ -22,7 +22,7 @@
 -record(log,
         {log_file       :: undefined | file:fd(),
          dir            :: string(),
-         cache          :: gb_trees:tree(binary(), binary()),
+         cache          :: ets:tid(),
          total_size = 0 :: integer(),
          count = 0      :: integer(),
          last_sync = ?NOW :: {integer(), integer(), integer()},
