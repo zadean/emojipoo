@@ -206,7 +206,7 @@ layer_from_filename(FileName) ->
    end.
 
 init([Dir, Opts0]) ->
-   %% ensure expory_secs option is set in config
+   %% ensure expiry_secs option is set in config
    Opts =
       case emojipoo_util:get_opt(expiry_secs, Opts0) of
          undefined ->
@@ -225,7 +225,7 @@ init([Dir, Opts0]) ->
             filelib:ensure_dir(Dir ++ "/ignore"),
             MinLevel = emojipoo_util:get_opt(default_depth, Opts0, ?DEFAULT_DEPTH),
             {ok, TopLevel} = emojipoo_layer:start_link(Dir, MinLevel, undefined, Opts),
-            io:format("~p~n", [{?LINE, TopLevel}]),
+            %io:format("~p~n", [{?LINE, TopLevel}]),
             MaxLevel = MinLevel,
             {ok, Nursery} = emojipoo_log:new(Dir, MinLevel, MaxLevel, Opts),
             {TopLevel, Nursery, MaxLevel}
