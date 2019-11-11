@@ -7,7 +7,7 @@
 -export([
    compress/2, 
    uncompress/1, 
-   estimate_node_size_increment/3, 
+   estimate_node_size_increment/2, 
    encode_index_node/2, 
    decode_index_node/2, 
    crc_encapsulate_kv_entry/2, 
@@ -52,28 +52,28 @@ file_exists(FileName) ->
             false
     end.
 
-estimate_node_size_increment(_KVList, Key, {Value, _TStamp})
+estimate_node_size_increment(Key, {Value, _TStamp})
   when is_integer(Value) -> 
    byte_size(Key) + 5 + 4;
-estimate_node_size_increment(_KVList, Key, {Value, _TStamp})
+estimate_node_size_increment(Key, {Value, _TStamp})
   when is_binary(Value) -> 
    byte_size(Key) + 5 + 4 + byte_size(Value);
-estimate_node_size_increment(_KVList, Key, {Value, _TStamp})
+estimate_node_size_increment(Key, {Value, _TStamp})
   when is_atom(Value) -> 
    byte_size(Key) + 8 + 4;
-estimate_node_size_increment(_KVList, Key, {Value, _TStamp})
+estimate_node_size_increment(Key, {Value, _TStamp})
   when is_tuple(Value) -> 
    byte_size(Key) + 13 + 4;
-estimate_node_size_increment(_KVList, Key, Value)
+estimate_node_size_increment(Key, Value)
   when is_integer(Value) -> 
    byte_size(Key) + 5 + 4;
-estimate_node_size_increment(_KVList, Key, Value)
+estimate_node_size_increment(Key, Value)
   when is_binary(Value) -> 
    byte_size(Key) + 5 + 4 + byte_size(Value);
-estimate_node_size_increment(_KVList, Key, Value)
+estimate_node_size_increment(Key, Value)
   when is_atom(Value) -> 
    byte_size(Key) + 8 + 4;
-estimate_node_size_increment(_KVList, Key, Value)
+estimate_node_size_increment(Key, Value)
   when is_tuple(Value) -> 
    byte_size(Key) + 13 + 4.
 

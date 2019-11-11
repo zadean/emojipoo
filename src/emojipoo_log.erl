@@ -195,11 +195,7 @@ finish(#log{dir = Dir,
                                         [{size, ?BTREE_SIZE(MinLevel)},
                                          {compress, none} | Config]),
          try
-            F = fun(Key, Value, Acc) ->
-                      ok = emojipoo_writer:add(BT, Key, Value),
-                      Acc
-                end,
-            gb_tree_fold(F, 0, Cache)            
+            emojipoo_writer:add_cache(BT, Cache)
          catch
             A:B:C ->
                io:format("DID NOT WORK ~p~n", [{A,B,C}]),
@@ -295,22 +291,18 @@ batch1(Spec, #log{log_file = File,
    Data = emojipoo_util:crc_encapsulate_batch(Spec, Expiry),
    ok = file:write(File, Data),
    Log2 = do_sync(File, Log1),
-   BatchFun = fun({put, Key, Value}, Cache) ->
-                    case Expiry of
-                       infinity ->
-                          enter(Key, Value, Cache);
-                       _ ->
-                          enter(Key, {Value, Expiry}, Cache)
-                    end;
-                 ({delete, Key}, Cache) ->
-                    case Expiry of
-                       infinity ->
-                          enter(Key, ?TOMBSTONE, Cache);
-                       _ ->
-                          enter(Key, {?TOMBSTONE, Expiry}, Cache)
-                    end
-              end,   
-   Cache2 = lists:foldl(BatchFun, Cache0, Spec),
+   EntriesFun = 
+        fun({put, Key, Value}) when Expiry == infinity ->
+               {Key, Value};
+           ({put, Key, Value}) ->
+               {Key, {Value, Expiry}};
+           ({delete, Key}) when Expiry == infinity ->
+               {Key, ?TOMBSTONE};
+           ({delete, Key}) ->
+               {Key, {?TOMBSTONE, Expiry}}
+        end,
+   Entries = lists:map(EntriesFun, Spec),
+   Cache2 = enter(Entries, Cache0),
 
    Count = tree_size(Cache2),
    %?log("Count ~p~n", [Count]),
@@ -323,11 +315,11 @@ set_max_depth(Log = #log{}, MaxLevel) ->
    Log#log{max_depth = MaxLevel}.
 
 
-gb_tree_fold(Fun, Acc, Tree) when is_function(Fun, 3) ->
-   IFun = fun({Key, Value}, Acc0) ->
-                Fun(Key, Value, Acc0)
-          end,
-   ets:foldl(IFun, Acc, Tree).
+%% gb_tree_fold(Fun, Acc, Tree) when is_function(Fun, 3) ->
+%%    IFun = fun({Key, Value}, Acc0) ->
+%%                 Fun(Key, Value, Acc0)
+%%           end,
+%%    ets:foldl(IFun, Acc, Tree).
 
 
 tree_fold(SendTo, SelfOrRef, {KVs, Continuation}, true) ->
@@ -390,8 +382,12 @@ enter(Key, Value, Cache) ->
    ets:insert(Cache, {Key, Value}),
    Cache.
 
+enter(Entries, Cache) ->
+    ets:insert(Cache, Entries),
+    Cache.
+
 tree_size(Cache) ->
-   ets:info(Cache, size).
+    ets:info(Cache, size).
 
 % Value | 'none'
 tree_lookup(Key, Cache) ->

@@ -11,6 +11,7 @@ start(A, B, X, Size, IsLastLevel, Options) ->
    Self = self(),
    Merge = 
       fun() ->
+            Before = ?NOW,
             try
                {ok, OutCount} = ?MODULE:merge(A, B, X,
                                               Size,
@@ -22,6 +23,9 @@ start(A, B, X, Size, IsLastLevel, Options) ->
                   ?error("~p: merge failed ~p:~p ~p -> ~s~n",
                          [self(), C,E,S,X]),
                   erlang:raise(C,E,S)
+            after
+                Diff = timer:now_diff(?NOW, Before),
+                ?log("Merge of ~p took: ~p~n", [Size, Diff div 1000])
             end
       end,
    erlang:spawn_link(Merge).

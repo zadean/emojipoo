@@ -101,7 +101,7 @@ spawn_merge(State) ->
    BFileName = filename("B",State),
    XFileName = filename("X",State),
 
-   ?log("starting merge~n", []),
+   %?log("starting merge~n", []),
 
    file:delete(XFileName),
 

@@ -24,6 +24,7 @@
 %% API
 -export([open/1, open/2, 
          add/3, 
+         add_cache/2, 
          count/1, 
          close/1]).
 
@@ -63,6 +64,9 @@ open(Name, Options) ->
 
 add(Server, Key, Value) ->
    gen_server:cast(Server, {add, Key, Value}).
+
+add_cache(Server, Cache) ->
+   gen_server:cast(Server, {add, Cache}).
 
 %% @doc Return number of KVs added to this writer so far
 count(Server) ->
@@ -139,7 +143,17 @@ handle_cast({add, Key, {Value, TStamp}}, State) when is_binary(Key),
    {noreply, NewState};
 handle_cast({add, Key, Value}, State) when is_binary(Key), is_binary(Value) ->
    {ok, State2} = append_node(0, Key, Value, State),
-   {noreply, State2}.
+   {noreply, State2};
+handle_cast({add, Cache}, State) ->
+    Before = ?NOW,
+    Fun = fun({Key, Value}, State0) ->
+                 {ok, State1} = append_node(0, Key, Value, State0),
+                 State1
+          end,
+    State2 = ets:foldl(Fun, State, Cache),
+    Diff = timer:now_diff(?NOW, Before),
+    ?log("Merge cache took: ~p~n", [Diff div 1000]),
+    {noreply, State2}.
 
 handle_call(count, _From, #state{value_count = VC,
                                  tombstone_count = TC} = State) ->
@@ -210,18 +224,18 @@ append_node(Level, Key, Value,
                    value_count = VC, 
                    tombstone_count = TC} = State) ->
    %% The top-of-stack node is at the level we wish to insert at.
-   %% Assert that keys are increasing:
-   case MembersList of
-      [] -> ok;
-      [{PrevKey,_}|_] ->
-         if (Key >= PrevKey) -> ok;
-            true ->
-               ?error("keys not ascending ~p < ~p~n", [PrevKey, Key]),
-               exit({badarg, Key})
-         end
-   end,
-   OldSize = emojipoo_util:estimate_node_size_increment(MembersList, Key, Value),
-   NewSize = NodeSize + OldSize,
+%%    %% Assert that keys are increasing:
+%%    case MembersList of
+%%       [] -> ok;
+%%       [{PrevKey,_}|_] ->
+%%          if (Key >= PrevKey) -> ok;
+%%             true ->
+%%                ?error("keys not ascending ~p < ~p~n", [PrevKey, Key]),
+%%                exit({badarg, Key})
+%%          end
+%%    end,
+   RecSize = emojipoo_util:estimate_node_size_increment(Key, Value),
+   NewSize = NodeSize + RecSize,
    {TC1, VC1} =
      case Level of
         0 ->
@@ -262,3 +276,10 @@ flush_node_buffer(#state{nodes=[#node{level = Level,
                            index_file_pos = NodePos + DataSize,
                            last_node_pos  = NodePos,
                            last_node_size = DataSize }).
+
+
+%% gb_tree_fold(Fun, Acc, Tree) when is_function(Fun, 3) ->
+%%    IFun = fun({Key, Value}, Acc0) ->
+%%                 Fun(Key, Value, Acc0)
+%%           end,
+%%    ets:foldl(IFun, Acc, Tree).
