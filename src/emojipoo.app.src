@@ -1,40 +1,38 @@
-{application, emojipoo,
- [{description, "An Erlang/OTP Persistent LSM-BTree"},
-  {vsn, "0.1.0"},
-  {registered, []},
-  {mod, {emojipoo_app, []}},
-  {applications,
-   [kernel,
-    stdlib
-   ]},
-  {env,[
-      %% compression options (none | gzip)
-      {compress, none},
-      
-      %% read ahead buffer size in bytes
-      {read_buffer_size, 524288},
-      
-      %% delayed write buffer size in bytes
-      {write_buffer_size, 52488},
-      
-      %% How/when to force fsync of the transaction 
-      %% log file (none | sync | {seconds, pos_integer()}) 
-      {sync_strategy, none},
-      
-      %% Time To Live for new records, 0 == infinity
-      {expiry_secs, 0},
-      
-      %% List of options as with erlang:spawn_opt/2
-      {spawn_opt, []},
-      
-      %% Initial depth of the `pile`. Means that 2^Depth 
-      %% keys will fit before pushing keys down the pile.
-      {default_depth, 15}
-      ]},
-  {modules, []},
+{application, emojipoo, [
+    {description, "An Erlang/OTP Persistent LSM-BTree"},
+    {vsn, "0.1.0"},
+    {registered, []},
+    {mod, {emojipoo_app, []}},
+    {applications, [kernel, stdlib]},
+    {env, [
+        %% compression options (none | gzip)
+        {compress, none},
 
-  {licenses, ["Apache 2.0"]},
-  {links, ["https://github.com/zadean/emojipoo",
-           %% the code is a refactoring of:
-           "https://github.com/krestenkrab/hanoidb"]}
- ]}.
+        %% read ahead buffer size in bytes
+        {read_buffer_size, 524288},
+
+        %% delayed write buffer size in bytes
+        {write_buffer_size, 52488},
+
+        %% How/when to force fsync of the transaction
+        %% log file (none | sync | {seconds, pos_integer()})
+        {sync_strategy, none},
+
+        %% Time To Live for new records, 0 == infinity
+        {expiry_secs, 0},
+
+        %% List of options as with erlang:spawn_opt/2
+        {spawn_opt, []},
+
+        %% Initial depth of the `pile`. Means that 2^Depth
+        %% keys will fit before pushing keys down the pile.
+        {default_depth, 15}
+    ]},
+    {modules, []},
+    {licenses, ["Apache-2.0"]},
+    {links, [
+        {"Github", "https://github.com/zadean/emojipoo"},
+        %% the code is a refactoring of:
+        {"Inspiration", "https://github.com/krestenkrab/hanoidb"}
+    ]}
+]}.
